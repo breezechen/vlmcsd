@@ -24,6 +24,10 @@ int_fast8_t UseRpcBTFN = TRUE;
 const char *defaultport = "1688";
 #endif // NO_SOCKETS
 
+#if !defined(NO_PRIVATE_IP_DETECT)
+uint32_t PublicIPProtectionLevel = 0;
+#endif
+
 KmsResponseParam_t KmsResponseParameters[MAX_KMSAPPS];
 
 #if !defined(NO_SOCKETS) && !defined(NO_SIGHUP) && !defined(_WIN32)
@@ -43,6 +47,7 @@ uint32_t MaxTasks = SEM_VALUE_MAX;
 #endif // !defined(NO_LIMIT) && !defined (NO_SOCKETS) && !__minix__
 
 #ifndef NO_LOG
+int_fast8_t LogDateAndTime = TRUE;
 char *fn_log = NULL;
 int_fast8_t logstdout = 0;
 #ifndef NO_VERBOSE_LOG
@@ -51,10 +56,14 @@ int_fast8_t logverbose = 0;
 #endif // NO_LOG
 
 #ifndef NO_SOCKETS
+#ifndef _WIN32
 int_fast8_t nodaemon = 0;
+#endif // _WIN32
 int_fast8_t InetdMode = 0;
 #else
+#ifndef _WIN32
 int_fast8_t nodaemon = 1;
+#endif // _WIN32
 int_fast8_t InetdMode = 1;
 #endif
 
@@ -64,8 +73,12 @@ uint16_t Lcid = 0;
 #endif
 
 #ifndef NO_SOCKETS
+#ifdef SIMPLE_SOCKETS
+SOCKET s_server;
+#else
 SOCKET *SocketList;
 int numsockets = 0;
+#endif
 
 #if !defined(NO_LIMIT) && !__minix__
 #ifndef _WIN32 // Posix
@@ -91,6 +104,10 @@ CRITICAL_SECTION logmutex;
 #endif // !defined(_WIN32) && !defined(__CYGWIN__)
 #endif // USE_THREADS
 #endif // NO_LOG
+
+#if HAVE_FREEBIND
+int_fast8_t freebind = FALSE;
+#endif // HAVE_FREEBIND
 
 
 

@@ -42,7 +42,7 @@
 #include <limits.h>
 #include <ctype.h>
 #include <stdarg.h>
-#include <semaphore.h>
+//#include <semaphore.h>
 #include "types.h"
 
 #define MAX_KMSAPPS 3
@@ -74,10 +74,16 @@ extern const char *const Version;
 #define UINT_MAX 4294967295
 #endif
 
+#ifdef IS_LIBRARY
+#define MESSAGE_BUFFER_SIZE 256
+EXTERNC __declspec(EXTERNAL) extern char ErrorMessage[MESSAGE_BUFFER_SIZE];
+#endif // IS_LIBRARY
 
 extern int global_argc, multi_argc;
 extern CARGV global_argv, multi_argv;
+#ifndef _WIN32
 extern int_fast8_t nodaemon;
+#endif // _WIN32
 extern DWORD VLActivationInterval;
 extern DWORD VLRenewalInterval;
 extern int_fast8_t DisconnectImmediately;
@@ -96,6 +102,10 @@ extern int_fast8_t UseRpcBTFN;
 extern const char *defaultport;
 #endif // NO_SOCKETS
 
+#if !defined(NO_PRIVATE_IP_DETECT)
+extern uint32_t PublicIPProtectionLevel;
+#endif
+
 #if !defined(NO_SOCKETS) && !defined(NO_SIGHUP) && !defined(_WIN32)
 extern int_fast8_t IsRestarted;
 #endif // !defined(NO_SOCKETS) && !defined(NO_SIGHUP) && !defined(_WIN32)
@@ -109,6 +119,7 @@ extern uint32_t MaxTasks;
 #endif // !defined(NO_LIMIT) && !defined (NO_SOCKETS) && !__minix__
 
 #ifndef NO_LOG
+extern int_fast8_t LogDateAndTime;
 extern char *fn_log;
 extern int_fast8_t logstdout;
 #ifndef NO_VERBOSE_LOG
@@ -122,8 +133,12 @@ extern uint16_t Lcid;
 #endif
 
 #if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#if defined(SIMPLE_SOCKETS)
+extern SOCKET s_server;
+#else // !defined(SIMPLE_SOCKETS)
 extern SOCKET *SocketList;
 extern int numsockets;
+#endif // !defined(SIMPLE_SOCKETS)
 
 #if !defined(NO_LIMIT) && !__minix__
 
@@ -151,6 +166,10 @@ extern CRITICAL_SECTION logmutex;
 #endif // _WIN32
 #endif // USE_THREADS
 #endif // NO_LOG
+
+#if HAVE_FREEBIND
+extern int_fast8_t freebind;
+#endif // HAVE_FREEBIND
 
 
 #endif // INCLUDED_SHARED_GLOBALS_H

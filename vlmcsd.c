@@ -7,6 +7,10 @@
 #error Microsoft RPC is only available on Windows and Cygwin
 #endif
 
+#if defined(USE_MSRPC) && defined(SIMPLE_SOCKETS)
+#error You can only define either USE_MSRPC or SIMPLE_SOCKETS but not both
+#endif
+
 #if defined(NO_SOCKETS) && defined(USE_MSRPC)
 #error Cannot use inetd mode with Microsoft RPC
 #endif
@@ -39,7 +43,9 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <sys/stat.h>
+#ifndef NO_LIMIT
 #include <semaphore.h>
+#endif // NO_LIMIT
 #endif // !_WIN32
 
 #if __APPLE__
@@ -66,18 +72,12 @@
 #include "ntservice.h"
 #include "helpers.h"
 
+static const char* const optstring = "N:B:m:t:w:0:3:H:A:R:u:g:L:p:i:P:l:r:U:W:C:F:o:T:SseDdVvqkZ";
 
-static const char* const optstring = "N:B:m:t:w:0:3:H:A:R:u:g:L:p:i:P:l:r:U:W:C:SsfeDd46VvIdqkZ";
-
-#if !defined(NO_SOCKETS)
-#if !defined(USE_MSRPC)
+#if !defined(NO_SOCKETS) && !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 static uint_fast8_t maxsockets = 0;
-static int_fast8_t haveIPv6Stack = 0;
-static int_fast8_t haveIPv4Stack = 0;
-static int_fast8_t v6required = 0;
-static int_fast8_t v4required = 0;
-#endif // !defined(USE_MSRPC)
-#endif // !defined(NO_SOCKETS)
+
+#endif // !defined(NO_SOCKETS) && !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 
 #ifdef _NTSERVICE
 static int_fast8_t installService = 0;
@@ -107,11 +107,16 @@ static IniFileParameter_t IniFileParameterList[] =
 		{ "RandomizationLevel", INI_PARAM_RANDOMIZATION_LEVEL },
 		{ "LCID", INI_PARAM_LCID },
 #	endif // NO_RANDOM_EPID
-#	ifdef USE_MSRPC
+#	if !defined(NO_SOCKETS) && (defined(USE_MSRPC) || defined(SIMPLE_SOCKETS) || defined(HAVE_GETIFADDR))
 		{ "Port", INI_PARAM_PORT },
-#	endif // USE_MSRPC
+#	endif // defined(USE_MSRPC) || defined(SIMPLE_SOCKETS)
 #	if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#	ifndef SIMPLE_SOCKETS
 		{ "Listen", INI_PARAM_LISTEN },
+#	endif // SIMPLE_SOCKETS
+#	if HAVE_FREEBIND
+		{ "FreeBind", INI_PARAM_FREEBIND },
+#	endif // HAVE_FREEBIND
 #	if !defined(NO_LIMIT) && !__minix__
 		{ "MaxWorkers", INI_PARAM_MAX_WORKERS },
 #	endif // !defined(NO_LIMIT) && !__minix__
@@ -128,6 +133,7 @@ static IniFileParameter_t IniFileParameterList[] =
 		{ "PIDFile", INI_PARAM_PID_FILE },
 #	endif // NO_PID_FILE
 #	ifndef NO_LOG
+		{ "LogDateAndTime", INI_PARAM_LOG_DATE_AND_TIME },
 		{ "LogFile", INI_PARAM_LOG_FILE },
 #	ifndef NO_VERBOSE_LOG
 		{ "LogVerbose", INI_PARAM_LOG_VERBOSE },
@@ -141,6 +147,9 @@ static IniFileParameter_t IniFileParameterList[] =
 		{ "user", INI_PARAM_UID },
 		{ "group", INI_PARAM_GID},
 #	endif // !defined(NO_USER_SWITCH) && !defined(_WIN32)
+#	if !defined(NO_PRIVATE_IP_DETECT)
+		{"PublicIPProtectionLevel", INI_PARAM_PUBLIC_IP_PROTECTION_LEVEL },
+#	endif
 };
 
 #endif // NO_INI_FILE
@@ -200,10 +209,10 @@ static char GetNumericId(gid_t *restrict id, const char *const c)
 	gid_t temp;
 
 	temp = (gid_t)strtoll(c, &endptr, 10);
-
 	if (!*endptr) *id = temp;
+	if (*endptr || temp == (gid_t)-1) errno = EINVAL;
 
-	return *endptr;
+	return *endptr || *id == (gid_t)-1;
 }
 
 
@@ -266,15 +275,23 @@ static __noreturn void usage()
 			"  -r 0|1|2\t\tset ePID randomization level (default 1)\n"
 			"  -C <LCID>\t\tuse fixed <LCID> in random ePIDs\n"
 			#endif // NO_RANDOM_EPID
+			#if !defined(NO_PRIVATE_IP_DETECT)
+			#if HAVE_GETIFADDR
+			"  -o 0|1|2|3\t\tset protection level against clients with public IP addresses (default 0)\n"
+			#else // !HAVE_GETIFADDR
+			"  -o 0|2\t\tset protection level against clients with public IP addresses (default 0)\n"
+			#endif // !HAVE_GETIFADDR
+			#endif // !defined(NO_PRIVATE_IP_DETECT)
 			#ifndef NO_SOCKETS
-			#ifndef USE_MSRPC
-			"  -4\t\t\tuse IPv4\n"
-			"  -6\t\t\tuse IPv6\n"
+			#if !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 			"  -L <address>[:<port>]\tlisten on IP address <address> with optional <port>\n"
 			"  -P <port>\t\tset TCP port <port> for subsequent -L statements (default 1688)\n"
-			#else // USE_MSRPC
+			#if HAVE_FREEBIND
+			"  -F0, -F1\t\tdisable/enable binding to foreign IP addresses\n"
+			#endif // HAVE_FREEBIND
+			#else // defined(USE_MSRPC) || defined(SIMPLE_SOCKETS)
 			"  -P <port>\t\tuse TCP port <port> (default 1688)\n"
-			#endif // USE_MSRPC
+			#endif // defined(USE_MSRPC) || defined(SIMPLE_SOCKETS)
 			#if !defined(NO_LIMIT) && !__minix__
 			"  -m <clients>\t\tHandle max. <clients> simultaneously (default no limit)\n"
 			#endif // !defined(NO_LIMIT) && !__minix__
@@ -293,11 +310,8 @@ static __noreturn void usage()
 			#endif // NO_LOG
 			#ifndef _WIN32 //
 			"  -D			run in foreground\n"
-			"  -f			run in foreground"
-			#ifndef NO_LOG
-			" and log to stdout"
-			#endif // NO_LOG
-			"\n"
+			#else // _WIN32
+			"  -D			does nothing. Provided for compatibility with POSIX versions only\n"
 			#endif // _WIN32
 			#endif // NO_SOCKETS
 			#ifndef USE_MSRPC
@@ -324,13 +338,16 @@ static __noreturn void usage()
 			"  -l syslog		log to syslog\n"
 			#endif // _WIN32
 			"  -l <file>		log to <file>\n"
+			"  -T0, -T1\t\tdisable/enable logging with time and date (default -T1)\n"
 			#ifndef NO_VERBOSE_LOG
 			"  -v\t\t\tlog verbose\n"
 			"  -q\t\t\tdon't log verbose (default)\n"
 			#endif // NO_VERBOSE_LOG
 			#endif // NO_LOG
-			"  -V			display version information and exit"
-			"\n",
+			#ifndef NO_VERSION_INFORMATION
+			"  -V			display version information and exit\n"
+			#endif // NO_VERSION_INFORMATION
+			,
 			Version, global_argv[0]);
 
 	exit(!0);
@@ -507,21 +524,22 @@ static BOOL setIniFileParameter(uint_fast8_t id, const char *const iniarg)
 
 #	endif // NO_RANDOM_EPID
 
-#	ifdef USE_MSRPC
+#	if (defined(USE_MSRPC) || defined(SIMPLE_SOCKETS) || defined(HAVE_GETIFADDR)) && !defined(NO_SOCKETS)
 
 		case INI_PARAM_PORT:
 			defaultport = allocateStringArgument(iniarg);
 			break;
 
-#	endif // USE_MSRPC
+#	endif // (defined(USE_MSRPC) || defined(SIMPLE_SOCKETS) || defined(HAVE_GETIFADDR)) && !defined(NO_SOCKETS)
 
-#	if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#	if !defined(NO_SOCKETS) && !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 
 		case INI_PARAM_LISTEN:
 			maxsockets++;
 			return TRUE;
 
-#	if !defined(NO_LIMIT) && !__minix__
+#	endif // !defined(NO_SOCKETS) && !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
+#	if !defined(NO_LIMIT) && !defined(NO_SOCKETS) && !__minix__
 
 		case INI_PARAM_MAX_WORKERS:
 #			ifdef USE_MSRPC
@@ -531,8 +549,7 @@ static BOOL setIniFileParameter(uint_fast8_t id, const char *const iniarg)
 #			endif // !USE_MSRPC
 			break;
 
-#	endif // !defined(NO_LIMIT) && !__minix__
-#	endif // NO_SOCKETS
+#	endif // !defined(NO_LIMIT) && !defined(NO_SOCKETS) && !__minix__
 
 #	ifndef NO_PID_FILE
 
@@ -546,6 +563,10 @@ static BOOL setIniFileParameter(uint_fast8_t id, const char *const iniarg)
 
 		case INI_PARAM_LOG_FILE:
 			fn_log = allocateStringArgument(iniarg);
+			break;
+
+		case INI_PARAM_LOG_DATE_AND_TIME:
+			success = getIniFileArgumentBool(&LogDateAndTime, iniarg);
 			break;
 
 #	ifndef NO_VERBOSE_LOG
@@ -592,6 +613,31 @@ static BOOL setIniFileParameter(uint_fast8_t id, const char *const iniarg)
 			break;
 
 #	endif // USE_MSRPC
+
+#	if HAVE_FREEBIND
+
+		case INI_PARAM_FREEBIND:
+			success = getIniFileArgumentBool(&freebind, iniarg);
+			break;
+
+#	endif // HAVE_FREEBIND
+
+#	if !defined(NO_PRIVATE_IP_DETECT)
+
+		case INI_PARAM_PUBLIC_IP_PROTECTION_LEVEL:
+			success = getIniFileArgumentInt(&PublicIPProtectionLevel, iniarg, 0, 3);
+
+#			if !HAVE_GETIFADDR
+			if (PublicIPProtectionLevel & 1)
+			{
+				IniFileErrorMessage = "Must be 0 or 2";
+				success = FALSE;
+			}
+#			endif // !HAVE_GETIFADDR
+
+			break;
+
+#	endif // !defined(NO_PRIVATE_IP_DETECT)
 
 		default:
 			return FALSE;
@@ -729,7 +775,7 @@ static BOOL handleIniFileParameter(const char *s)
 }
 
 
-#if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#if !defined(NO_SOCKETS) && !defined(SIMPLE_SOCKETS) && !defined(USE_MSRPC)
 static BOOL setupListeningSocketsFromIniFile(const char *s)
 {
 	if (!maxsockets) return TRUE;
@@ -740,7 +786,7 @@ static BOOL setupListeningSocketsFromIniFile(const char *s)
 	IniFileErrorMessage = IniFileErrorBuffer;
 	return addListeningSocket(s);
 }
-#endif // !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#endif // !defined(NO_SOCKETS) && !defined(SIMPLE_SOCKETS) && !defined(USE_MSRPC)
 
 
 static BOOL readIniFile(const uint_fast8_t pass)
@@ -775,7 +821,7 @@ static BOOL readIniFile(const uint_fast8_t pass)
 					!setEpidFromIniFileLine(&s, appIndex) ||
 					!setHwIdFromIniFileLine(&s, appIndex);
 		}
-#		if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#		if !defined(NO_SOCKETS) && !defined(SIMPLE_SOCKETS) && !defined(USE_MSRPC)
 		else if (pass == INI_FILE_PASS_2)
 		{
 			lineParseError = !setupListeningSocketsFromIniFile(s);
@@ -784,7 +830,7 @@ static BOOL readIniFile(const uint_fast8_t pass)
 		{
 			return FALSE;
 		}
-#		endif // NO_SOCKETS
+#		endif // !defined(NO_SOCKETS) &&  && !defined(SIMPLE_SOCKETS) && !defined(USE_MSRPC)
 
 		if (lineParseError)
 		{
@@ -1064,18 +1110,14 @@ static void parseGeneralArguments() {
 
 		#ifndef NO_SOCKETS
 
-		#ifndef USE_MSRPC
-		case '4':
-		case '6':
 		case 'P':
-			ignoreIniFileParameter(INI_PARAM_LISTEN);
-			break;
-		#else // USE_MSRPC
-		case 'P':
-			defaultport = optarg;
 			ignoreIniFileParameter(INI_PARAM_PORT);
+			#if !defined(SIMPLE_SOCKETS) && !defined(USE_MSRPC)
+			ignoreIniFileParameter(INI_PARAM_LISTEN);
+			#else
+			defaultport = optarg;
+			#endif // !SIMPLE_SOCKETS
 			break;
-		#endif // USE_MSRPC
 
 		#if !defined(NO_LIMIT) && !__minix__
 
@@ -1113,6 +1155,12 @@ static void parseGeneralArguments() {
 		#endif
 
 		#ifndef NO_LOG
+
+		case 'T':
+			if (!getArgumentBool(&LogDateAndTime, optarg)) usage();
+			ignoreIniFileParameter(INI_PARAM_LOG_DATE_AND_TIME);
+			break;
+
 		case 'l':
 			fn_log = getCommandLineArg(optarg);
 			ignoreIniFileParameter(INI_PARAM_LOG_FILE);
@@ -1128,20 +1176,31 @@ static void parseGeneralArguments() {
 		#endif // NO_VERBOSE_LOG
 		#endif // NO_LOG
 
+		#if !defined(NO_PRIVATE_IP_DETECT)
+		case 'o':
+			ignoreIniFileParameter(INI_PARAM_PUBLIC_IP_PROTECTION_LEVEL);
+			PublicIPProtectionLevel = getOptionArgumentInt(o, 0, 3);
+
+			#if !HAVE_GETIFADDR
+			if (PublicIPProtectionLevel & 1) usage();
+			#endif // !HAVE_GETIFADDR
+
+			break;
+		#endif // !defined(NO_PRIVATE_IP_DETECT)
+
 		#ifndef NO_SOCKETS
-		#ifndef USE_MSRPC
+		#if !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 		case 'L':
 			maxsockets++;
 			ignoreIniFileParameter(INI_PARAM_LISTEN);
 			break;
-		#endif // USE_MSRPC
-
-		case 'f':
-			nodaemon = 1;
-			#ifndef NO_LOG
-			logstdout = 1;
-			#endif
+		#if HAVE_FREEBIND
+		case 'F':
+			if (!getArgumentBool(&freebind, optarg)) usage();
+			ignoreIniFileParameter(INI_PARAM_FREEBIND);
 			break;
+		#endif // HAVE_FREEBIND
+		#endif // !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 
 		#ifdef _NTSERVICE
 		case 'U':
@@ -1165,20 +1224,23 @@ static void parseGeneralArguments() {
         #endif // _NTSERVICE
 
 		case 'D':
+			#ifndef _WIN32
 			nodaemon = 1;
+			#else // _WIN32
+			#ifdef _PEDANTIC
+			printerrorf("Warning: Option -D has no effect in the Windows version of vlmcsd.\n");
+			#endif // _PEDANTIC
+			#endif // _WIN32
 			break;
 
 		#ifndef NO_LOG
+
 		case 'e':
 			logstdout = 1;
 			break;
+
 		#endif // NO_LOG
 		#endif // NO_SOCKETS
-
-		#ifndef _WIN32
-		case 'I': // Backward compatibility with svn681 and earlier
-			break;
-		#endif // _WIN32
 
 		#ifndef NO_RANDOM_EPID
 		case 'r':
@@ -1210,8 +1272,8 @@ static void parseGeneralArguments() {
 			#endif // NO_SIGHUP
 			if (GetGid())
 			{
-				printerrorf("Fatal: setgid for %s failed.\n", optarg);
-				exit(!0);
+				printerrorf("Fatal: %s for %s failed: %s\n", "setgid", gname, strerror(errno));
+				exit(errno);
 			}
 			break;
 
@@ -1223,8 +1285,8 @@ static void parseGeneralArguments() {
 			#endif // NO_SIGHUP
 			if (GetUid())
 			{
-				printerrorf("Fatal: setuid for %s failed.\n", optarg);
-				exit(!0);
+				printerrorf("Fatal: %s for %s failed: %s\n", "setuid", uname, strerror(errno));
+				exit(errno);
 			}
 			break;
 		#endif // NO_USER_SWITCH && !_WIN32
@@ -1259,12 +1321,21 @@ static void parseGeneralArguments() {
 			break;
 		#endif // !USE_MSRPC
 
+		#ifndef NO_VERSION_INFORMATION
 		case 'V':
 			#ifdef _NTSERVICE
 			if (IsNTService) break;
 			#endif
-			printf("vlmcsd %s\n", Version);
+			#if defined(__s390__) && !defined(__zarch__) && !defined(__s390x__)
+			printf("vlmcsd %s %i-bit\n", Version, sizeof(void*) == 4 ? 31 : (int)sizeof(void*) << 3);
+			#else
+			printf("vlmcsd %s %i-bit\n", Version, (int)sizeof(void*) << 3);
+			#endif // defined(__s390__) && !defined(__zarch__) && !defined(__s390x__)
+			printPlatform();
+			printCommonFlags();
+			printServerFlags();
 			exit(0);
+		#endif // NO_VERSION_INFORMATION
 
 		default:
 			usage();
@@ -1429,55 +1500,39 @@ static void allocateSemaphore(void)
 #endif // !defined(NO_LIMIT) && !defined(NO_SOCKETS) && !__minix__
 
 
-#if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#if !defined(NO_SOCKETS) && !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 int setupListeningSockets()
 {
 	int o;
+#	if HAVE_GETIFADDR
+	char** privateIPList;
+	int numPrivateIPs = 0;
+	if (PublicIPProtectionLevel & 1) getPrivateIPAddresses(&numPrivateIPs, &privateIPList);
+	uint_fast8_t allocsockets = maxsockets ? (maxsockets + numPrivateIPs) : ((PublicIPProtectionLevel & 1) ? numPrivateIPs : 2);
+#	else // !HAVE_GETIFADDR
 	uint_fast8_t allocsockets = maxsockets ? maxsockets : 2;
+#	endif // !HAVE_GETIFADDR
 
 	SocketList = (SOCKET*)vlmcsd_malloc((size_t)allocsockets * sizeof(SOCKET));
 
-	haveIPv4Stack = checkProtocolStack(AF_INET);
-	haveIPv6Stack = checkProtocolStack(AF_INET6);
+	int_fast8_t haveIPv4Stack = checkProtocolStack(AF_INET);
+	int_fast8_t haveIPv6Stack = checkProtocolStack(AF_INET6);
 
 	// Reset getopt since we've alread used it
 	optReset();
 
 	for (opterr = 0; ( o = getopt(global_argc, (char* const*)global_argv, optstring) ) > 0; ) switch (o)
 	{
-	case '4':
+		case 'P':
+			defaultport = optarg;
+			break;
 
-		if (!haveIPv4Stack)
-		{
-			printerrorf("Fatal: Your system does not support %s.\n", cIPv4);
-			return !0;
-		}
-		v4required = 1;
-		break;
+		case 'L':
+			addListeningSocket(optarg);
+			break;
 
-	case '6':
-
-		if (!haveIPv6Stack)
-		{
-			printerrorf("Fatal: Your system does not support %s.\n", cIPv6);
-			return !0;
-		}
-		v6required = 1;
-		break;
-
-	case 'L':
-
-		addListeningSocket(optarg);
-		break;
-
-	case 'P':
-
-		defaultport = optarg;
-		break;
-
-	default:
-
-		break;
+		default:
+			break;
 	}
 
 
@@ -1494,12 +1549,31 @@ int setupListeningSockets()
 	}
 #	endif
 
+#	if HAVE_GETIFADDR
+	if (PublicIPProtectionLevel & 1)
+	{
+		int i;
+		for (i = 0; i < numPrivateIPs; i++)
+		{
+			addListeningSocket(privateIPList[i]);
+			free(privateIPList[i]);
+		}
+
+		free(privateIPList);
+	}
+#	endif // HAVE_GETIFADDR
+
 	// if -L hasn't been specified on the command line, use default sockets (all IP addresses)
 	// maxsocket results from first pass parsing the arguments
 	if (!maxsockets)
 	{
-		if (haveIPv6Stack && (v6required || !v4required)) addListeningSocket("::");
-		if (haveIPv4Stack && (v4required || !v6required)) addListeningSocket("0.0.0.0");
+#		if HAVE_GETIFADDR
+		if (!(PublicIPProtectionLevel & 1) && haveIPv6Stack) addListeningSocket("::");
+		if (!(PublicIPProtectionLevel & 1) && haveIPv4Stack) addListeningSocket("0.0.0.0");
+#		else // !HAVE_GETIFADDR
+		if (haveIPv6Stack) addListeningSocket("::");
+		if (haveIPv4Stack) addListeningSocket("0.0.0.0");
+#		endif // !HAVE_GETIFADDR
 	}
 
 	if (!numsockets)
@@ -1510,7 +1584,7 @@ int setupListeningSockets()
 
 	return 0;
 }
-#endif // !defined(NO_SOCKETS) && !defined(USE_MSRPC)
+#endif // !defined(NO_SOCKETS) && !defined(USE_MSRPC) && !defined(SIMPLE_SOCKETS)
 
 
 int server_main(int argc, CARGV argv)
@@ -1566,7 +1640,7 @@ int newmain()
 	#endif // USE_MSRPC
 
 	// Windows can never daemonize
-	nodaemon = 1;
+	//nodaemon = 1;
 
 	#else // __CYGWIN__
 
@@ -1585,7 +1659,9 @@ int newmain()
 	{
 		InetdMode = 1;
 		nodaemon = 1;
+		#ifndef SIMPLE_SOCKETS
 		maxsockets = 0;
+		#endif // SIMPLE_SOCKETS
 		#ifndef NO_LOG
 		logstdout = 0;
 		#endif // NO_LOG
@@ -1614,9 +1690,13 @@ int newmain()
 	#if !defined(NO_SOCKETS) && !defined(USE_MSRPC)
 	if (!InetdMode)
 	{
+		#ifdef SIMPLE_SOCKETS
+		if ((error = listenOnAllAddresses())) return error;
+		#else // !SIMPLE_SOCKETS
 		if ((error = setupListeningSockets())) return error;
+		#endif // !SIMPLE_SOCKETS
 	}
-	#endif // NO_SOCKETS
+	#endif // !defined(NO_SOCKETS) && !defined(USE_MSRPC)
 
 	// After sockets have been set up, we may switch to a lower privileged user
 	#if !defined(_WIN32) && !defined(NO_USER_SWITCH)
@@ -1625,16 +1705,25 @@ int newmain()
 	if (!IsRestarted)
 	{
 	#endif // NO_SIGHUP
-		if (gid != INVALID_GID && setgid(gid))
+		if (gid != INVALID_GID)
 		{
-			printerrorf("Fatal: setgid for %s failed.\n", gname);
-			return !0;
+			if (setgid(gid))
+			{
+				printerrorf("Fatal: %s for %s failed: %s\n", "setgid", gname, strerror(errno));
+				return errno;
+			}
+
+			if (setgroups(1, &gid))
+			{
+				printerrorf("Fatal: %s for %s failed: %s\n", "setgroups", gname, strerror(errno));
+				return errno;
+			}
 		}
 
 		if (uid != INVALID_UID && setuid(uid))
 		{
-			printerrorf("Fatal: setuid for %s failed.\n", uname);
-			return !0;
+			printerrorf("Fatal: %s for %s failed: %s\n", "setuid", uname, strerror(errno));
+			return errno;
 		}
 	#ifndef NO_SIGHUP
 	}

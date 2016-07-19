@@ -37,15 +37,15 @@
  */
 
 #ifndef EPID_WINDOWS
-#define EPID_WINDOWS "06401-00206-271-298329-03-1033-9600.0000-0452015"
+#define EPID_WINDOWS "06401-00206-271-398432-03-1033-9600.0000-1422016"
 #endif
 
 #ifndef EPID_OFFICE2010
-#define EPID_OFFICE2010 "06401-00096-199-198322-03-1033-9600.0000-0452015"
+#define EPID_OFFICE2010 "06401-00096-199-198384-03-1033-9600.0000-1422016"
 #endif
 
 #ifndef EPID_OFFICE2013
-#define EPID_OFFICE2013 "06401-00206-234-398213-03-1033-9600.0000-0452015"
+#define EPID_OFFICE2013 "06401-00206-234-384729-03-1033-9600.0000-1422016"
 #endif
 
 #ifndef HWID // HwId from the Ratiborus VM
@@ -79,7 +79,6 @@
 //#define INI_FILE "/etc/vlmcsd.ini"
 
 #endif // INI_FILE
-
 
 
 
@@ -366,6 +365,20 @@
  */
 
 
+#ifndef NO_FREEBIND
+/*
+ * Do not compile support for FREEBIND (Linux) and IP_BINDANY (FreeBSD). This disables the -F1 command
+ * line option and you can bind only to (listen on) IP addresses that are currently up and running on
+ * your system.
+ */
+
+//#define NO_FREEBIND
+
+#endif // NO_FREEBIND
+
+
+
+
 #ifndef NO_EXTENDED_PRODUCT_LIST
 /*
  * Do not compile the extended product list. Removes the list of Activation GUIDs (aka
@@ -395,6 +408,18 @@
 //#define NO_BASIC_PRODUCT_LIST
 
 #endif // NO_BASIC_PRODUCT_LIST
+
+
+
+
+#ifndef NO_VERSION_INFORMATION
+/*
+ * Removes the -V option from vlmcsd and vlmcs that displays the version information
+ */
+
+//#define NO_VERSION_INFORMATION
+
+#endif // NO_VERSION_INFORMATION
 
 
 
@@ -511,6 +536,19 @@
 
 
 
+#ifndef NO_PRIVATE_IP_DETECT
+/*
+ * Disables the ability to protect vlmcsd against KMS requests from public IP addresses.
+ * Removes -o from the command line.
+ */
+
+//#define NO_PRIVATE_IP_DETECT
+
+#endif // NO_PRIVATE_IP_DETECT
+
+
+
+
 #ifndef NO_SOCKETS
 /*
  * Disables standalone startup of vlmcsd. If you use this config directive, you must start vlmcsd from an internet
@@ -574,6 +612,18 @@
 
 #endif // NO_SIGHUP
 
+
+
+
+#ifndef SIMPLE_SOCKETS
+/*
+ * Disables the ability to choose IP addresses using the -L option in vlmcsd. vlmcsd will listen on all IP addresses.
+ * It still supports IPv4 and IPv6.
+ */
+
+//#define SIMPLE_SOCKETS
+
+#endif // SIMPLE_SOCKETS
 
 
 
